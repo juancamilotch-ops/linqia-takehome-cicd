@@ -1,0 +1,44 @@
+﻿name: CD Pipeline
+
+on:
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types: [completed]
+
+permissions:
+  contents: read
+  packages: read
+  pull-requests: write
+
+jobs:
+  deploy-mock:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine image tag (head sha)
+        id: meta
+        run: echo "tag=${{ github.event.workflow_run.head_sha }}" >> $GITHUB_OUTPUT
+
+      - name: Pull image from GHCR
+        run: docker pull ghcr.io/${{ github.repository }}/sample_app:${{ steps.meta.outputs.tag }}
+
+      - name: Run mock deployment (prints 2+3)
+        id: runapp
+        run: |
+          docker run --rm ghcr.io/${{ github.repository }}/sample_app:${{ steps.meta.outputs.tag }} 2 3
+
+      - name: Comment on PR with deployment status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prs = context.payload.workflow_run.pull_requests || [];
+            if (prs.length === 0) { core.info('No PR associated'); return; }
+            const prNumber = prs[0].number;
+            const tag = '${{ steps.meta.outputs.tag }}';
+            const image = `ghcr.io/${context.repo.owner}/${context.repo.repo}/sample_app:${tag}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: `**CD Result** ✅\n\nImage: \`${image}\`\nMock deploy executed in Actions.`
+            });
